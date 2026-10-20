@@ -3430,6 +3430,65 @@ describe("clearThread", () => {
 });
 
 describe("appendEvent", () => {
+  it("exports only committed run metadata and a fixed failure category", async () => {
+    const created = { ...event(4), type: "run.failed", runId: "run-1" };
+    const tx = {
+      thread: { update: vi.fn().mockResolvedValue({ nextEventSeq: 5 }) },
+      run: { findUnique: vi.fn().mockResolvedValue({ status: "failed" }) },
+      event: { create: vi.fn().mockResolvedValue(created) },
+    };
+    const at = new Date("2026-01-01T00:00:00Z");
+    const run = {
+      userId: "user-1",
+      trigger: "user",
+      error: "No API key: private@example.test",
+      createdAt: at,
+      startedAt: at,
+      completedAt: at,
+    };
+    const prisma = {
+      run: { findUnique: vi.fn().mockResolvedValue(run) },
+      $transaction: vi.fn(async (callback: (client: typeof tx) => unknown) => callback(tx)),
+    } as unknown as PrismaClient;
+    const analytics = { capture: vi.fn(), flush: async () => undefined };
+    await appendEvent(
+      prisma,
+      {
+        spaceId: "workspace-1",
+        threadId: "thread-1",
+        botId: "bot-1",
+        type: "run.failed",
+        runId: "run-1",
+        payload: { error: run.error },
+      },
+      undefined,
+      analytics,
+    );
+    expect(analytics.capture).toHaveBeenCalledExactlyOnceWith(
+      "user-1",
+      { name: "run_failed", trigger: "user", failure: "credentials" },
+      { id: "run-1", at },
+    );
+    expect(JSON.stringify(analytics.capture.mock.calls)).not.toContain("private@example.test");
+    vi.mocked(prisma.run.findUnique).mockRejectedValueOnce(new Error("db unavailable"));
+    await expect(
+      appendEvent(
+        prisma,
+        {
+          spaceId: "workspace-1",
+          threadId: "thread-1",
+          botId: "bot-1",
+          type: "run.failed",
+          runId: "run-1",
+          payload: {},
+        },
+        undefined,
+        analytics,
+      ),
+    ).resolves.toEqual(expect.objectContaining({ type: "run.failed" }));
+    expect(analytics.capture).toHaveBeenCalledTimes(1);
+  });
+
   it("does not persist output from a cancelled run after history was cleared", async () => {
     const fanout = new TestFanout();
     const publish = vi.spyOn(fanout, "publish");
