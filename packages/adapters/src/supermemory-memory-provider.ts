@@ -56,7 +56,13 @@ function parseSupermemoryConnection(
   if (apiKey.length < 8) throw new Error("apiKey must contain at least 8 characters");
   const baseUrl =
     mode === "cloud" ? SUPERMEMORY_CLOUD_BASE_URL : requiredValue(settings, "baseUrl");
-  if (mode === "local") assertLocalServiceBaseUrlSync(baseUrl);
+  if (mode === "local") {
+    // The cloud origin takes the unpinned cloud transport, so it cannot be a local endpoint.
+    if (isSupermemoryCloudBaseUrl(baseUrl)) {
+      throw new Error("Local mode cannot use the Supermemory Cloud URL.");
+    }
+    assertLocalServiceBaseUrlSync(baseUrl);
+  }
   parseServiceBaseUrl(baseUrl);
   return { mode, baseUrl, apiKey };
 }

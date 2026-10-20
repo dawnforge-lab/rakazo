@@ -67,7 +67,10 @@ function parseHonchoConnection(
   const baseUrl = local ? settings.baseUrl?.trim() : HONCHO_CLOUD_BASE_URL;
   if (!baseUrl) throw new Error("baseUrl is required");
   if (local) {
-    parseServiceBaseUrl(baseUrl);
+    // The cloud origin takes the unpinned cloud transport, so it cannot be a local endpoint.
+    if (parseServiceBaseUrl(baseUrl).origin === HONCHO_CLOUD_BASE_URL) {
+      throw new Error("Local mode cannot use the Honcho Cloud URL.");
+    }
     assertLocalServiceBaseUrlSync(baseUrl);
   }
   const apiKey = credentials.apiKey?.trim();

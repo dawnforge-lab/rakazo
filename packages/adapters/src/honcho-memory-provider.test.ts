@@ -526,6 +526,8 @@ describe("Honcho local mode", () => {
     [{ mode: "remote", baseUrl: LOCAL_URL }, /mode/],
     [{ mode: "local" }, /baseUrl/],
     [{ mode: "local", baseUrl: `${LOCAL_URL}/?token=1` }, /base URL/],
+    [{ mode: "local", baseUrl: "https://api.honcho.dev" }, /Cloud URL/],
+    [{ mode: "local", baseUrl: "https://api.honcho.dev/v3/" }, /Cloud URL/],
   ])("rejects invalid local settings %o", (settings, error) => {
     expect(() => createHonchoProvider(settings, { apiKey: "honcho-admin-token" })).toThrow(error);
   });
