@@ -1351,6 +1351,10 @@ msgstr "Conectado. Suas ferramentas estão disponíveis na sua próxima mensagem
 msgid "Connecting…"
 msgstr "Conectando…"
 
+#: src/pages/memory-providers/ConnectionModeFields.tsx
+msgid "Connection"
+msgstr "Conexão"
+
 #: src/lib/model-connection-preflight.ts
 msgid "Connection test failed."
 msgstr "O teste de conexão falhou."

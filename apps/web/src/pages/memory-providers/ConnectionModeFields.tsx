@@ -21,22 +21,27 @@ export function ConnectionModeFields({
   baseUrlPlaceholder: string;
 }) {
   const baseUrlId = useId();
+  const connectionLabelId = useId();
   return (
     <>
-      <div className="flex gap-2">
-        {(["cloud", "local"] as const).map((option) => (
-          <Toggle
-            key={option}
-            variant="outline"
-            pressed={mode === option}
-            disabled={busy}
-            onPressedChange={() => onModeChange(option)}
-            className="flex-1 font-normal text-muted-foreground aria-pressed:text-foreground"
-          >
-            {option === "cloud" ? <Trans>Cloud</Trans> : <Trans>Local</Trans>}
-          </Toggle>
-        ))}
-      </div>
+      <Field className="mt-4" aria-labelledby={connectionLabelId}>
+        <FieldLabel id={connectionLabelId}>
+          <Trans>Connection</Trans>
+        </FieldLabel>
+        <div className="grid grid-cols-2 gap-1 rounded-lg bg-muted p-1">
+          {(["cloud", "local"] as const).map((option) => (
+            <Toggle
+              key={option}
+              pressed={mode === option}
+              disabled={busy}
+              onPressedChange={() => onModeChange(option)}
+              className="text-[13px] aria-pressed:bg-background aria-pressed:shadow-sm"
+            >
+              {option === "cloud" ? <Trans>Cloud</Trans> : <Trans>Local</Trans>}
+            </Toggle>
+          ))}
+        </div>
+      </Field>
 
       {mode === "local" ? (
         <Field className="mt-4">

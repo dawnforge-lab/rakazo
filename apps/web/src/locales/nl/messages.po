@@ -1351,6 +1351,10 @@ msgstr "Gekoppeld. Zijn tools zijn beschikbaar vanaf je volgende bericht."
 msgid "Connecting…"
 msgstr "Bezig met verbinden…"
 
+#: src/pages/memory-providers/ConnectionModeFields.tsx
+msgid "Connection"
+msgstr "Verbinding"
+
 #: src/lib/model-connection-preflight.ts
 msgid "Connection test failed."
 msgstr "Verbindingstest mislukt."

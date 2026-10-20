@@ -1351,6 +1351,10 @@ msgstr "מחובר. הכלים שלו יהיו זמינים החל מההודע�
 msgid "Connecting…"
 msgstr "מתחבר…"
 
+#: src/pages/memory-providers/ConnectionModeFields.tsx
+msgid "Connection"
+msgstr "חיבור"
+
 #: src/lib/model-connection-preflight.ts
 msgid "Connection test failed."
 msgstr "בדיקת החיבור נכשלה."

@@ -55,7 +55,6 @@ export function SupermemorySettingsForm({ busy, onConnect }: MemoryProviderSetti
         type="button"
         variant="secondary"
         className="mt-5 rounded-full"
-        size="sm"
         disabled={busy || apiKey.trim().length < 8 || (mode === "local" && !baseUrl.trim())}
         onClick={() => void connect()}
       >

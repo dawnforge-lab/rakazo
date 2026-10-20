@@ -46,7 +46,7 @@ export const MEMORY_PROVIDER_SETTINGS: readonly MemoryProviderSettingsRegistrati
   {
     id: "honcho",
     name: "Honcho",
-    description: "",
+    description: "Hosted or self-hosted Honcho for long-term memory.",
     SettingsForm: HonchoSettingsForm,
     connectedLabel: (config) => {
       const { mode, baseUrl, workspaceId } = config.settings;
