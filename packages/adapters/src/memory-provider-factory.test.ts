@@ -1,6 +1,9 @@
+import { lookup } from "node:dns/promises";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { assertLocalServiceBaseUrl } from "./local-service-endpoint.js";
 import { createMemoryProvider, SpaceMemoryProviderResolver } from "./memory-provider-factory.js";
+
+vi.mock("node:dns/promises", () => ({ lookup: vi.fn() }));
 
 function resolverFor(
   plaintext: string,
@@ -36,9 +39,29 @@ function resolverFor(
   };
 }
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.resetAllMocks();
+});
 
 describe("SpaceMemoryProviderResolver", () => {
+  it.each(["honcho", "supermemory"])(
+    "disables %s without loading credentials when local DNS revalidation fails",
+    async (provider) => {
+      vi.mocked(lookup).mockRejectedValue(new Error("DNS unavailable"));
+      const { resolver, secrets } = resolverFor(JSON.stringify({ apiKey: "fake-key" }), {
+        provider,
+        mode: "local",
+        baseUrl: "http://memory.example.test:8000",
+        ownerUserId: "config-author",
+      });
+
+      await expect(resolver.resolve("workspace-1")).resolves.toBeNull();
+      expect(lookup).toHaveBeenCalled();
+      expect(secrets.load).not.toHaveBeenCalled();
+    },
+  );
+
   it("gates and revalidates saved local Honcho endpoints like other local providers", async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
@@ -57,7 +80,7 @@ describe("SpaceMemoryProviderResolver", () => {
       baseUrl: "http://203.0.113.10:8000",
       ownerUserId: "config-author",
     });
-    await expect(publicHost.resolver.resolve("workspace-1")).rejects.toThrow(/private-network/);
+    await expect(publicHost.resolver.resolve("workspace-1")).resolves.toBeNull();
     expect(publicHost.secrets.load).not.toHaveBeenCalled();
 
     const missingUrl = resolverFor("honcho-admin-token", {
@@ -65,7 +88,7 @@ describe("SpaceMemoryProviderResolver", () => {
       baseUrl: "",
       ownerUserId: "config-author",
     });
-    await expect(missingUrl.resolver.resolve("workspace-1")).rejects.toThrow(/baseUrl/);
+    await expect(missingUrl.resolver.resolve("workspace-1")).resolves.toBeNull();
     expect(missingUrl.secrets.load).not.toHaveBeenCalled();
 
     const owned = resolverFor(JSON.stringify({ apiKey: "honcho-admin-token" }), {
@@ -117,7 +140,7 @@ describe("SpaceMemoryProviderResolver", () => {
     expect(fetchMock.mock.calls[0]?.[0]).toBe("http://localhost:6767/memory/v4/search");
   });
 
-  it("rejects ambiguous persisted URLs even when the deployment owner configured them", async () => {
+  it("disables ambiguous persisted URLs even when the deployment owner configured them", async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
     const { resolver } = resolverFor("sm_fake_key", {
@@ -125,7 +148,7 @@ describe("SpaceMemoryProviderResolver", () => {
       baseUrl: "http://127.0.0.1:8123/internal-action#",
       ownerUserId: "config-author",
     });
-    await expect(resolver.resolve("workspace-1")).rejects.toThrow(/base URL/);
+    await expect(resolver.resolve("workspace-1")).resolves.toBeNull();
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
@@ -153,7 +176,7 @@ describe("SpaceMemoryProviderResolver", () => {
       baseUrl: "http://203.0.113.10:6767",
       ownerUserId: "config-author",
     });
-    await expect(resolver.resolve("workspace-1")).rejects.toThrow(/private-network/);
+    await expect(resolver.resolve("workspace-1")).resolves.toBeNull();
     expect(secrets.load).not.toHaveBeenCalled();
 
     await expect(

@@ -1,5 +1,6 @@
 import type { DurableMemoryScope, SecretStore, SemanticMemoryProvider } from "@rakazo/adapter-kit";
 import type { PrismaClient } from "@rakazo/db";
+import { getLogger } from "@rakazo/logging";
 import {
   createHonchoProvider,
   HONCHO_PROVIDER_ID,
@@ -188,7 +189,13 @@ export class SpaceMemoryProviderResolver implements MemoryProviderResolver {
       // Also disable pre-existing local configurations authored outside the deployment boundary.
       if (!deployment?.ownerUserId || deployment.ownerUserId !== config.userId) return null;
     }
-    await memoryProviderAdapter(config.provider).revalidate?.(settings);
+    const adapter = memoryProviderAdapter(config.provider);
+    try {
+      await adapter.revalidate?.(settings);
+    } catch {
+      getLogger().warn("Semantic memory disabled: endpoint revalidation failed");
+      return null;
+    }
     const credentials = decodeCredentials(
       config.provider,
       await this.secrets.load(config.secret.ciphertext, config.secret.id),
