@@ -157,13 +157,11 @@ async function main() {
       pipedream,
     },
   );
-  const stack = createConnectorStack(false, undefined, [
+  const stack = createConnectorStack(undefined, [
     new InstalledConnectorProvider(prisma, secrets, {}, allowPrivateEndpoint),
     ...integrationSettings.providers(),
     mcp,
   ]);
-  const connector = stack.destination;
-  await connector.start();
   integrationSettings.warmDirectories();
   const memoryProviders = new SpaceMemoryProviderResolver(prisma, secrets);
   const home = new LocalAgentHomeStore(dataDir);
@@ -179,8 +177,10 @@ async function main() {
   // One provider instance so emulator launches and polls share the same Map.
   const cloudAgent = createCloudAgentConnection();
   // Shared with the reconciler so a stuck wait uses the same push path as a finish notice.
-  const notifications = new ExpoPushProvider(dataDir, (sessionId) =>
-    pushSessionExpiresAt(prisma, sessionId),
+  const notifications = new ExpoPushProvider(
+    dataDir,
+    (sessionId) => pushSessionExpiresAt(prisma, sessionId),
+    jobs,
   );
   const executor = createRunExecutor({
     maxUploadSizeBytes: uploadSizeFromEnv(process.env),
@@ -249,6 +249,7 @@ async function main() {
     deploymentModelConfigured,
     messaging,
     cloudAgent,
+    notifications,
   });
   // graphile-worker run() connects through the shared pool. createPool already
   // retries connect() on 53300 a finite number of times. Keep retrying start
@@ -295,7 +296,6 @@ async function main() {
       await jobs.close();
       await secrets.close();
       await realtime.close();
-      await connector.stop();
       await mcp.close();
       await prisma.$disconnect().catch(() => undefined);
       await pool.end().catch(() => undefined);
