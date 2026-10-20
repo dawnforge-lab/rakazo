@@ -125,9 +125,9 @@ export async function assertLocalServiceBaseUrl(
 export async function revalidateLocalServiceSettings(
   settings: Record<string, string>,
 ): Promise<void> {
-  if (settings.mode === "local" && settings.baseUrl) {
-    await assertLocalServiceBaseUrl(settings.baseUrl, { allowPrivateEndpoint: true });
-  }
+  if (settings.mode !== "local") return;
+  if (!settings.baseUrl) throw new Error("baseUrl is required");
+  await assertLocalServiceBaseUrl(settings.baseUrl, { allowPrivateEndpoint: true });
 }
 
 /** Loopback and IP literals have no DNS to rebind. Private names pin to private addresses. */

@@ -60,6 +60,14 @@ describe("SpaceMemoryProviderResolver", () => {
     await expect(publicHost.resolver.resolve("workspace-1")).rejects.toThrow(/private-network/);
     expect(publicHost.secrets.load).not.toHaveBeenCalled();
 
+    const missingUrl = resolverFor("honcho-admin-token", {
+      ...local,
+      baseUrl: "",
+      ownerUserId: "config-author",
+    });
+    await expect(missingUrl.resolver.resolve("workspace-1")).rejects.toThrow(/baseUrl/);
+    expect(missingUrl.secrets.load).not.toHaveBeenCalled();
+
     const owned = resolverFor(JSON.stringify({ apiKey: "honcho-admin-token" }), {
       ...local,
       baseUrl: "http://10.0.0.8:8000",
