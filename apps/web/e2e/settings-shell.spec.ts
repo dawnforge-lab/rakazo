@@ -117,4 +117,16 @@ test("Honcho memory settings empty and filled", async ({ page }, testInfo) => {
   await memory.getByLabel("Workspace", { exact: true }).fill("team-notes");
   await expect(memory.getByRole("button", { name: "Connect", exact: true })).toBeEnabled();
   await captureScreenshot(page, testInfo, "memory-honcho-filled");
+  await memory.getByRole("button", { name: "Local", exact: true }).click();
+  await expect(memory.getByLabel("Base URL", { exact: true })).toHaveValue("http://localhost:8000");
+  await memory
+    .getByLabel("Base URL", { exact: true })
+    .fill("http://honcho-api.railway.internal:8000");
+  await expect(memory.getByRole("button", { name: "Connect", exact: true })).toBeEnabled();
+  await memory.getByLabel("Base URL", { exact: true }).fill("");
+  await expect(memory.getByRole("button", { name: "Connect", exact: true })).toBeDisabled();
+  await memory
+    .getByLabel("Base URL", { exact: true })
+    .fill("http://honcho-api.railway.internal:8000");
+  await captureScreenshot(page, testInfo, "memory-honcho-local");
 });

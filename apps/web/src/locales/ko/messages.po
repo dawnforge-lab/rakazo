@@ -804,7 +804,7 @@ msgstr "백업 모델 순서"
 msgid "Backup models saved."
 msgstr "백업 모델을 저장했습니다."
 
-#: src/pages/memory-providers/SupermemorySettingsForm.tsx
+#: src/pages/memory-providers/ConnectionModeFields.tsx
 msgid "Base URL"
 msgstr "서버 주소"
 
@@ -1167,7 +1167,7 @@ msgstr "계정 설정 닫기"
 msgid "Close voice settings"
 msgstr "음성 설정 닫기"
 
-#: src/pages/memory-providers/SupermemorySettingsForm.tsx
+#: src/pages/memory-providers/ConnectionModeFields.tsx
 msgid "Cloud"
 msgstr "클라우드"
 
@@ -2860,7 +2860,7 @@ msgstr "음성 서비스를 불러오는 중…"
 msgid "Loading…"
 msgstr "불러오는 중…"
 
-#: src/pages/memory-providers/SupermemorySettingsForm.tsx
+#: src/pages/memory-providers/ConnectionModeFields.tsx
 msgid "Local"
 msgstr "로컬"
 

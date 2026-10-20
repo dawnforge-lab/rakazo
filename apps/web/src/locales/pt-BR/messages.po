@@ -804,7 +804,7 @@ msgstr "Ordem dos modelos de backup"
 msgid "Backup models saved."
 msgstr "Modelos de backup salvos."
 
-#: src/pages/memory-providers/SupermemorySettingsForm.tsx
+#: src/pages/memory-providers/ConnectionModeFields.tsx
 msgid "Base URL"
 msgstr "URL Base"
 
@@ -1167,7 +1167,7 @@ msgstr "Fechar configurações do usuário"
 msgid "Close voice settings"
 msgstr "Fechar configurações de voz"
 
-#: src/pages/memory-providers/SupermemorySettingsForm.tsx
+#: src/pages/memory-providers/ConnectionModeFields.tsx
 msgid "Cloud"
 msgstr "Nuvem"
 
@@ -2860,7 +2860,7 @@ msgstr "Carregando provedores de voz..."
 msgid "Loading…"
 msgstr "Carregando..."
 
-#: src/pages/memory-providers/SupermemorySettingsForm.tsx
+#: src/pages/memory-providers/ConnectionModeFields.tsx
 msgid "Local"
 msgstr "Local"
 

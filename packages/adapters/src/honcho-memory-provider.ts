@@ -18,6 +18,13 @@ import {
   MAX_HONCHO_CONCLUSION_CHARS,
   probeHonchoAdminKey,
 } from "./honcho-client.js";
+import {
+  assertLocalServiceBaseUrlSync,
+  LocalServiceHost,
+  parseServiceBaseUrl,
+  pinLocalServiceHost,
+} from "./local-service-endpoint.js";
+import type { ResolveHostname } from "./network-address.js";
 
 export const HONCHO_PROVIDER_ID = "honcho";
 
@@ -29,9 +36,9 @@ const DEFAULT_REASONING_LEVEL: HonchoReasoningLevel = "low";
 /** Sentinel the dialectic is asked to return when it has nothing relevant. */
 const NO_MEMORY = "NO_RELEVANT_MEMORY";
 
-export function honchoRequiresDeploymentOwner(): boolean {
-  // Cloud only: the endpoint is fixed and public.
-  return false;
+/** Local mode reaches the deployment owner's own network, so only the owner may set it. */
+export function honchoRequiresDeploymentOwner(settings: Record<string, string>): boolean {
+  return settings.mode === "local";
 }
 
 /** Spaces do not share memory implicitly, so each Space gets its own Honcho workspace by default. */
@@ -47,7 +54,17 @@ export function honchoBotPeerId(botId: string): string {
 function parseHonchoConnection(
   settings: Record<string, string>,
   credentials: Record<string, string>,
-): { connection: HonchoConnectionConfig; workspaceId: string } {
+): { connection: HonchoConnectionConfig; workspaceId: string; local: boolean } {
+  // Configurations saved before local mode carry no mode and always meant Honcho Cloud.
+  const mode = settings.mode?.trim() || "cloud";
+  if (mode !== "cloud" && mode !== "local") throw new Error("mode must be cloud or local");
+  const local = mode === "local";
+  const baseUrl = local ? settings.baseUrl?.trim() : HONCHO_CLOUD_BASE_URL;
+  if (!baseUrl) throw new Error("baseUrl is required");
+  if (local) {
+    parseServiceBaseUrl(baseUrl);
+    assertLocalServiceBaseUrlSync(baseUrl);
+  }
   const apiKey = credentials.apiKey?.trim();
   if (!apiKey || apiKey.length < 8 || apiKey.length > 4096) {
     throw new Error("apiKey must contain 8–4096 characters");
@@ -62,18 +79,31 @@ function parseHonchoConnection(
     throw new Error("workspaceId may contain only letters, digits, '_' and '-'");
   }
   return {
-    connection: { baseUrl: HONCHO_CLOUD_BASE_URL, apiKey, reasoningLevel },
+    connection: { baseUrl, apiKey, reasoningLevel },
     workspaceId,
+    local,
   };
 }
 
 export async function prepareHonchoConnection(
   settings: Record<string, string>,
   credentials: Record<string, string>,
-  options?: { fetch?: typeof globalThis.fetch },
+  options?: {
+    allowPrivateEndpoint?: boolean;
+    resolveHostname?: ResolveHostname;
+    fetch?: typeof globalThis.fetch;
+  },
 ): Promise<{ settings: Record<string, string>; credentials: Record<string, string> }> {
-  const { connection, workspaceId } = parseHonchoConnection(settings, credentials);
-  const probeConnection = { ...connection, fetch: options?.fetch };
+  const { connection, workspaceId, local } = parseHonchoConnection(settings, credentials);
+  const pinnedAddresses = local
+    ? await pinLocalServiceHost(connection.baseUrl, options)
+    : undefined;
+  const probeConnection: HonchoConnectionConfig = {
+    ...connection,
+    fetch: options?.fetch,
+    resolveHostname: options?.resolveHostname,
+    ...(pinnedAddresses ? { pinnedAddresses } : {}),
+  };
   // An explicit workspace must accept this key. Without one, each Space creates its own
   // workspace on first use, which only an admin key may do; listing checks that without writing.
   const probe = workspaceId
@@ -88,6 +118,7 @@ export async function prepareHonchoConnection(
   }
   return {
     settings: {
+      ...(local ? { mode: "local", baseUrl: connection.baseUrl } : {}),
       reasoningLevel: connection.reasoningLevel,
       ...(workspaceId ? { workspaceId } : {}),
     },
@@ -115,11 +146,24 @@ function recallQuery(query: string): string {
 
 export class HonchoMemoryProvider implements SemanticMemoryProvider {
   private readonly ensured = new Map<string, Promise<boolean>>();
+  private readonly localHost?: LocalServiceHost;
 
   constructor(
     private readonly connection: HonchoConnectionConfig,
     private readonly settings: Record<string, string>,
-  ) {}
+  ) {
+    if (settings.mode === "local") {
+      this.localHost = new LocalServiceHost(connection.baseUrl, connection.resolveHostname);
+    }
+  }
+
+  /** Local hosts are checked and pinned before the first request, then reused. */
+  private async connectionForRequest(): Promise<SemanticMemoryResponse<HonchoConnectionConfig>> {
+    if (!this.localHost) return { ok: true, value: this.connection };
+    const blocked = await this.localHost.block();
+    if (blocked) return { ok: false, error: blocked };
+    return { ok: true, value: this.localHost.withPin(this.connection) };
+  }
 
   describe() {
     return {
@@ -137,6 +181,7 @@ export class HonchoMemoryProvider implements SemanticMemoryProvider {
 
   /** Peers are get-or-create; remember success per provider so each run pays for it once. */
   private async ensurePeers(
+    connection: HonchoConnectionConfig,
     workspaceId: string,
     peerIds: string[],
     signal: AbortSignal,
@@ -145,7 +190,7 @@ export class HonchoMemoryProvider implements SemanticMemoryProvider {
     let pending = this.ensured.get(key);
     let error = "";
     if (!pending) {
-      pending = ensureHonchoPeers(this.connection, workspaceId, peerIds, signal).then((result) => {
+      pending = ensureHonchoPeers(connection, workspaceId, peerIds, signal).then((result) => {
         if (!result.ok) error = result.error;
         return result.ok;
       });
@@ -160,9 +205,16 @@ export class HonchoMemoryProvider implements SemanticMemoryProvider {
     request: SemanticMemoryRecallRequest,
     context: AdapterContext,
   ): Promise<SemanticMemoryResponse<SemanticMemoryResult[]>> {
+    const connection = await this.connectionForRequest();
+    if (!connection.ok) return connection;
     const workspaceId = honchoWorkspaceId(this.settings, context.spaceId);
     const bot = honchoBotPeerId(request.botId);
-    const ready = await this.ensurePeers(workspaceId, [SHARED_PEER_ID, bot], context.signal);
+    const ready = await this.ensurePeers(
+      connection.value,
+      workspaceId,
+      [SHARED_PEER_ID, bot],
+      context.signal,
+    );
     if (!ready.ok) return ready;
     // Isolated: this bot's private view of the shared peer, independent of the user.
     // Shared: also the workspace-wide representation that all opted-in Spaces write to.
@@ -178,7 +230,7 @@ export class HonchoMemoryProvider implements SemanticMemoryProvider {
       perspectives.map(async ({ entity, ...perspective }) => ({
         entity,
         result: await honchoPeerChat(
-          this.connection,
+          connection.value,
           workspaceId,
           { ...perspective, query },
           context.signal,
@@ -214,14 +266,21 @@ export class HonchoMemoryProvider implements SemanticMemoryProvider {
     }
     const content = request.content.trim().slice(0, MAX_HONCHO_CONCLUSION_CHARS);
     if (!content) return { ok: false, error: "Honcho save skipped: memory content is empty." };
+    const connection = await this.connectionForRequest();
+    if (!connection.ok) return connection;
     const workspaceId = honchoWorkspaceId(this.settings, context.spaceId);
     const bot = honchoBotPeerId(request.botId);
-    const ready = await this.ensurePeers(workspaceId, [SHARED_PEER_ID, bot], context.signal);
+    const ready = await this.ensurePeers(
+      connection.value,
+      workspaceId,
+      [SHARED_PEER_ID, bot],
+      context.signal,
+    );
     if (!ready.ok) return ready;
     const conclusions = [{ content, observerId: bot, observedId: SHARED_PEER_ID }];
     if (request.scope === "shared")
       conclusions.push({ content, observerId: SHARED_PEER_ID, observedId: SHARED_PEER_ID });
-    return createHonchoConclusions(this.connection, workspaceId, conclusions, context.signal);
+    return createHonchoConclusions(connection.value, workspaceId, conclusions, context.signal);
   }
 
   async purgeHistory(

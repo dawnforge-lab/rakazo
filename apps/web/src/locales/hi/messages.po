@@ -804,7 +804,7 @@ msgstr "बैकअप मॉडल का क्रम"
 msgid "Backup models saved."
 msgstr "बैकअप मॉडल सहेजे गए।"
 
-#: src/pages/memory-providers/SupermemorySettingsForm.tsx
+#: src/pages/memory-providers/ConnectionModeFields.tsx
 msgid "Base URL"
 msgstr "बेस URL"
 
@@ -1167,7 +1167,7 @@ msgstr "उपयोगकर्ता सेटिंग्स बंद कर
 msgid "Close voice settings"
 msgstr "आवाज़ सेटिंग्स बंद करें"
 
-#: src/pages/memory-providers/SupermemorySettingsForm.tsx
+#: src/pages/memory-providers/ConnectionModeFields.tsx
 msgid "Cloud"
 msgstr "क्लाउड"
 
@@ -2860,7 +2860,7 @@ msgstr "आवाज़ प्रोवाइडर्स लोड हो र�
 msgid "Loading…"
 msgstr "लोड हो रहा है…"
 
-#: src/pages/memory-providers/SupermemorySettingsForm.tsx
+#: src/pages/memory-providers/ConnectionModeFields.tsx
 msgid "Local"
 msgstr "लोकल"
 
