@@ -25,6 +25,7 @@ import {
   pinLocalServiceHost,
 } from "./local-service-endpoint.js";
 import type { ResolveHostname } from "./network-address.js";
+import { MemoryProviderDeploymentOwnerRequiredError } from "./serenity-memory-provider.js";
 
 export const HONCHO_PROVIDER_ID = "honcho";
 
@@ -36,9 +37,12 @@ const DEFAULT_REASONING_LEVEL: HonchoReasoningLevel = "low";
 /** Sentinel the dialectic is asked to return when it has nothing relevant. */
 const NO_MEMORY = "NO_RELEVANT_MEMORY";
 
-/** Local mode reaches the deployment owner's own network, so only the owner may set it. */
+/**
+ * Local mode reaches the deployment owner's own network, so only the owner may set it.
+ * Fails closed: any mode other than an absent one or "cloud" needs the owner.
+ */
 export function honchoRequiresDeploymentOwner(settings: Record<string, string>): boolean {
-  return settings.mode === "local";
+  return settings.mode !== undefined && settings.mode !== "cloud";
 }
 
 /** Spaces do not share memory implicitly, so each Space gets its own Honcho workspace by default. */
@@ -56,7 +60,8 @@ function parseHonchoConnection(
   credentials: Record<string, string>,
 ): { connection: HonchoConnectionConfig; workspaceId: string; local: boolean } {
   // Configurations saved before local mode carry no mode and always meant Honcho Cloud.
-  const mode = settings.mode?.trim() || "cloud";
+  // Match exactly, as honchoRequiresDeploymentOwner does, so the owner gate sees the same mode.
+  const mode = settings.mode ?? "cloud";
   if (mode !== "cloud" && mode !== "local") throw new Error("mode must be cloud or local");
   const local = mode === "local";
   const baseUrl = local ? settings.baseUrl?.trim() : HONCHO_CLOUD_BASE_URL;
@@ -95,6 +100,10 @@ export async function prepareHonchoConnection(
   },
 ): Promise<{ settings: Record<string, string>; credentials: Record<string, string> }> {
   const { connection, workspaceId, local } = parseHonchoConnection(settings, credentials);
+  // Loopback needs no DNS pin, so refuse non-owners here before any request is sent.
+  if (local && options?.allowPrivateEndpoint !== true) {
+    throw new MemoryProviderDeploymentOwnerRequiredError();
+  }
   const pinnedAddresses = local
     ? await pinLocalServiceHost(connection.baseUrl, options)
     : undefined;

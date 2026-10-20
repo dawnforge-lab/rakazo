@@ -449,11 +449,28 @@ describe("Honcho local mode", () => {
     });
   }
 
-  it("requires the deployment owner only for local endpoints", () => {
+  it("requires the deployment owner for every mode except Honcho Cloud", () => {
     expect(honchoRequiresDeploymentOwner({})).toBe(false);
     expect(honchoRequiresDeploymentOwner({ mode: "cloud" })).toBe(false);
-    expect(honchoRequiresDeploymentOwner({ mode: "local", baseUrl: LOCAL_URL })).toBe(true);
+    for (const mode of ["local", " local ", "LOCAL", ""]) {
+      expect(honchoRequiresDeploymentOwner({ mode, baseUrl: LOCAL_URL })).toBe(true);
+    }
   });
+
+  it.each([" local ", "LOCAL", " cloud "])(
+    "rejects the unnormalized mode %j instead of reinterpreting it",
+    async (mode) => {
+      const fetch = localFetch();
+      await expect(
+        prepareHonchoConnection(
+          { mode, baseUrl: "http://127.0.0.1:8000" },
+          { apiKey: "honcho-admin-token" },
+          { allowPrivateEndpoint: true, fetch },
+        ),
+      ).rejects.toThrow(/mode/);
+      expect(fetch).not.toHaveBeenCalled();
+    },
+  );
 
   it("probes a private service name and saves its endpoint", async () => {
     const fetch = localFetch();
@@ -486,19 +503,24 @@ describe("Honcho local mode", () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 
-  it("refuses private endpoints for anyone but the deployment owner", async () => {
-    const fetch = localFetch();
-    const resolveHostname = vi.fn(privateResolver);
-    await expect(
-      prepareHonchoConnection(
-        { mode: "local", baseUrl: LOCAL_URL },
-        { apiKey: "honcho-admin-token" },
-        { allowPrivateEndpoint: false, resolveHostname, fetch },
-      ),
-    ).rejects.toBeInstanceOf(MemoryProviderDeploymentOwnerRequiredError);
-    expect(resolveHostname).not.toHaveBeenCalled();
-    expect(fetch).not.toHaveBeenCalled();
-  });
+  it.each([LOCAL_URL, "http://127.0.0.1:8000", "http://localhost:8000"])(
+    "refuses local endpoint %s for anyone but the deployment owner",
+    async (baseUrl) => {
+      const fetch = localFetch();
+      const resolveHostname = vi.fn(privateResolver);
+      for (const allowPrivateEndpoint of [false, undefined]) {
+        await expect(
+          prepareHonchoConnection(
+            { mode: "local", baseUrl, workspaceId: "team-notes" },
+            { apiKey: "honcho-admin-token" },
+            { allowPrivateEndpoint, resolveHostname, fetch },
+          ),
+        ).rejects.toBeInstanceOf(MemoryProviderDeploymentOwnerRequiredError);
+      }
+      expect(resolveHostname).not.toHaveBeenCalled();
+      expect(fetch).not.toHaveBeenCalled();
+    },
+  );
 
   it.each([
     [{ mode: "remote", baseUrl: LOCAL_URL }, /mode/],
