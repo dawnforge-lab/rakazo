@@ -232,7 +232,7 @@ function MemoryDocumentList({
               type="button"
               disabled={busy}
               onClick={() => (openId === doc.id ? closeDoc() : openDoc(doc))}
-              className={`-mx-2 h-auto w-[calc(100%+1rem)] justify-start whitespace-normal px-2 py-2.5 text-start ${openId === doc.id ? "bg-muted" : ""}`}
+              className="-mx-2 h-auto w-[calc(100%+1rem)] justify-start whitespace-normal px-2 py-2.5 text-start"
             >
               <span className="flex w-full items-baseline justify-between gap-3">
                 <span
