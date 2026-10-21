@@ -257,8 +257,8 @@ describe("HonchoMemoryProvider", () => {
         { memory: "The Space uses teal\nRoutine fact", entity: "rakazo-shared" },
         { memory: "The Space uses teal\nBot A's private fact", entity: "bot-bot-1" },
         { memory: "The Space uses teal", id: "conclusion-2", entity: "rakazo-shared" },
-        { memory: "Routine fact", id: "conclusion-5", entity: "rakazo-shared" },
         { memory: "Bot A's private fact", id: "conclusion-3", entity: "bot-bot-1" },
+        { memory: "Routine fact", id: "conclusion-5", entity: "rakazo-shared" },
       ],
     });
   });
@@ -659,6 +659,37 @@ describe("Honcho forget", () => {
     expect(await memory.recall({ ...recall, scope: "shared" }, context)).toEqual({
       ok: true,
       value: [],
+    });
+  });
+
+  it("keeps searching until no saved copy remains", async () => {
+    const fetch = honchoFetch();
+    const memory = provider(fetch);
+    for (let copy = 0; copy < 105; copy++) await save(memory, "Prefers tea", "isolated");
+    await expect(
+      memory.forget({ id: "conclusion-1", scope: "isolated", botId: "bot-1" }, context),
+    ).resolves.toMatchObject({ ok: true });
+    expect(deletes(fetch)).toHaveLength(105);
+    expect(await memory.recall(recall, context)).toEqual({ ok: true, value: [] });
+  });
+
+  it("cites each perspective's facts before the limit cuts them off", async () => {
+    const memory = provider(honchoFetch());
+    for (const fact of ["One", "Two", "Three", "Four", "Five"]) {
+      await save(memory, `Shared fact ${fact}`, "shared", "bot-2");
+    }
+    await save(memory, "Private fact", "isolated");
+    const recalled = await memory.recall({ ...recall, scope: "shared" }, context);
+    expect(recalled.ok && recalled.value).toHaveLength(5);
+    expect(recalled).toMatchObject({
+      ok: true,
+      value: expect.arrayContaining([
+        expect.objectContaining({
+          memory: "Private fact",
+          entity: "bot-bot-1",
+          id: expect.any(String),
+        }),
+      ]),
     });
   });
 

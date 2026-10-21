@@ -44,8 +44,8 @@ const DEFAULT_REASONING_LEVEL: HonchoReasoningLevel = "low";
 /** Sentinel the dialectic is asked to return when it has nothing relevant. */
 const NO_MEMORY = "NO_RELEVANT_MEMORY";
 
-/** Copies of one fact that forget looks for in each perspective. */
-const MAX_FORGOTTEN_COPIES = 10;
+/** Honcho returns at most this many conclusions per search. */
+const MAX_COPIES_PER_SEARCH = 100;
 
 /**
  * Local mode reaches the deployment owner's own network, so only the owner may set it.
@@ -328,11 +328,10 @@ export class HonchoMemoryProvider implements SemanticMemoryProvider {
     );
     // Stored conclusions give forget_memory real ids. They follow only a relevant answer,
     // so the dialectic still decides whether a turn recalls anything.
-    const cited: SemanticMemoryResult[] = [];
     const seen = new Set<string>();
-    for (const { entity, conclusions } of relevant) {
-      if (!conclusions?.ok) continue;
-      for (const conclusion of conclusions.value) {
+    const citedBy = relevant.map(({ entity, conclusions }) => {
+      const cited: SemanticMemoryResult[] = [];
+      for (const conclusion of conclusions?.ok ? conclusions.value : []) {
         const normalized = normalizeMemory(conclusion.content);
         if (seen.has(normalized)) continue;
         seen.add(normalized);
@@ -343,6 +342,15 @@ export class HonchoMemoryProvider implements SemanticMemoryProvider {
           provenance: "honcho",
           entity,
         });
+      }
+      return cited;
+    });
+    // Perspectives take turns so one cannot crowd another's ids out of the limit.
+    const cited: SemanticMemoryResult[] = [];
+    for (let round = 0; citedBy.some((list) => round < list.length); round++) {
+      for (const list of citedBy) {
+        const result = list[round];
+        if (result) cited.push(result);
       }
     }
     // An answer that repeats a cited fact verbatim adds nothing the citation lacks.
@@ -406,40 +414,50 @@ export class HonchoMemoryProvider implements SemanticMemoryProvider {
     if (!fact || !recallable(fact) || (request.entity && fact.observerId !== request.entity)) {
       return { ok: false, error: "No memory with that id was found in this bot's memory." };
     }
-    // A shared save writes the fact from two perspectives and recall cites one copy,
-    // so remove every copy this bot could recall again.
-    const copies = await Promise.all(
-      observers.map((observerId) =>
-        queryHonchoConclusions(
-          connection.value,
-          workspaceId,
-          {
-            query: fact.content,
-            observerId,
-            observedId: SHARED_PEER_ID,
-            topK: MAX_FORGOTTEN_COPIES,
-          },
-          context.signal,
-        ),
-      ),
-    );
-    const ids = new Set([fact.id]);
+    // A shared save writes the fact from two perspectives, repeated saves add more copies, and
+    // recall cites only one. Remove every copy this bot could recall again: deleted copies leave
+    // the search, so search again until a round finds none.
     const key = normalizeMemory(fact.content);
-    for (const copy of copies) {
-      if (!copy.ok) return copy;
-      for (const conclusion of copy.value) {
-        if (recallable(conclusion) && normalizeMemory(conclusion.content) === key) {
-          ids.add(conclusion.id);
+    const deleted = new Set<string>();
+    let pending = new Set([fact.id]);
+    while (pending.size > 0) {
+      const results = await Promise.all(
+        [...pending].map((conclusionId) =>
+          deleteHonchoConclusion(connection.value, workspaceId, conclusionId, context.signal),
+        ),
+      );
+      const failure = results.find((result) => !result.ok);
+      if (failure && !failure.ok) return failure;
+      for (const conclusionId of pending) deleted.add(conclusionId);
+      const copies = await Promise.all(
+        observers.map((observerId) =>
+          queryHonchoConclusions(
+            connection.value,
+            workspaceId,
+            {
+              query: fact.content,
+              observerId,
+              observedId: SHARED_PEER_ID,
+              topK: MAX_COPIES_PER_SEARCH,
+            },
+            context.signal,
+          ),
+        ),
+      );
+      pending = new Set();
+      for (const copy of copies) {
+        if (!copy.ok) return copy;
+        for (const conclusion of copy.value) {
+          if (
+            !deleted.has(conclusion.id) &&
+            recallable(conclusion) &&
+            normalizeMemory(conclusion.content) === key
+          ) {
+            pending.add(conclusion.id);
+          }
         }
       }
     }
-    const deleted = await Promise.all(
-      [...ids].map((conclusionId) =>
-        deleteHonchoConclusion(connection.value, workspaceId, conclusionId, context.signal),
-      ),
-    );
-    const failure = deleted.find((result) => !result.ok);
-    if (failure && !failure.ok) return failure;
     return { ok: true, value: { id: fact.id, expired: true, reason: request.reason ?? null } };
   }
 
