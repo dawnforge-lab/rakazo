@@ -416,19 +416,11 @@ export class HonchoMemoryProvider implements SemanticMemoryProvider {
     }
     // A shared save writes the fact from two perspectives, repeated saves add more copies, and
     // recall cites only one. Remove every copy this bot could recall again: deleted copies leave
-    // the search, so search again until a round finds none.
+    // the search, so search again until a round finds none. The cited fact goes last, so a failed
+    // forget can be retried with the same id.
     const key = normalizeMemory(fact.content);
-    const deleted = new Set<string>();
-    let pending = new Set([fact.id]);
-    while (pending.size > 0) {
-      const results = await Promise.all(
-        [...pending].map((conclusionId) =>
-          deleteHonchoConclusion(connection.value, workspaceId, conclusionId, context.signal),
-        ),
-      );
-      const failure = results.find((result) => !result.ok);
-      if (failure && !failure.ok) return failure;
-      for (const conclusionId of pending) deleted.add(conclusionId);
+    const deleted = new Set([fact.id]);
+    for (;;) {
       const copies = await Promise.all(
         observers.map((observerId) =>
           queryHonchoConclusions(
@@ -444,7 +436,7 @@ export class HonchoMemoryProvider implements SemanticMemoryProvider {
           ),
         ),
       );
-      pending = new Set();
+      const pending = new Set<string>();
       for (const copy of copies) {
         if (!copy.ok) return copy;
         for (const conclusion of copy.value) {
@@ -457,7 +449,23 @@ export class HonchoMemoryProvider implements SemanticMemoryProvider {
           }
         }
       }
+      if (pending.size === 0) break;
+      const results = await Promise.all(
+        [...pending].map((conclusionId) =>
+          deleteHonchoConclusion(connection.value, workspaceId, conclusionId, context.signal),
+        ),
+      );
+      const failure = results.find((result) => !result.ok);
+      if (failure && !failure.ok) return failure;
+      for (const conclusionId of pending) deleted.add(conclusionId);
     }
+    const removed = await deleteHonchoConclusion(
+      connection.value,
+      workspaceId,
+      fact.id,
+      context.signal,
+    );
+    if (!removed.ok) return removed;
     return { ok: true, value: { id: fact.id, expired: true, reason: request.reason ?? null } };
   }
 

@@ -662,6 +662,33 @@ describe("Honcho forget", () => {
     });
   });
 
+  it("keeps the cited fact until its copies are gone, so a failed forget can be retried", async () => {
+    const normal = honchoFetch();
+    let searchFails = false;
+    const fetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) =>
+      searchFails && String(url).endsWith("/conclusions/query")
+        ? new Response("", { status: 503 })
+        : normal(url, init),
+    );
+    const memory = provider(fetch);
+    await save(memory, "The Space uses teal", "shared");
+    const request = { id: "conclusion-2", scope: "shared" as const, botId: "bot-1" };
+
+    searchFails = true;
+    await expect(memory.forget(request, context)).resolves.toEqual({
+      ok: false,
+      error: "Honcho request failed: 503",
+    });
+    expect(fetch.mock.calls.some(([, init]) => init?.method === "DELETE")).toBe(false);
+
+    searchFails = false;
+    await expect(memory.forget(request, context)).resolves.toMatchObject({ ok: true });
+    const deleted = fetch.mock.calls
+      .filter(([, init]) => init?.method === "DELETE")
+      .map(([url]) => new URL(String(url)).pathname.split("/").pop());
+    expect(deleted).toEqual(["conclusion-1", "conclusion-2"]);
+  });
+
   it("keeps searching until no saved copy remains", async () => {
     const fetch = honchoFetch();
     const memory = provider(fetch);
