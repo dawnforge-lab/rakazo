@@ -7,8 +7,10 @@ import path from "node:path";
 import tls from "node:tls";
 import { lingui } from "@lingui/vite-plugin";
 import type { DesktopStackProbeResponse } from "@rakazo/contracts";
+import { buildIdAt } from "@rakazo/contracts/client-build";
 import {
   appContentSecurityPolicy,
+  CSP_REPORTING_ENDPOINTS,
   contentSecurityPolicyFor,
   parseContentSecuritySources,
 } from "@rakazo/contracts/content-security-policy";
@@ -30,6 +32,8 @@ import {
   injectNovncStorageShim,
   isNovncPage,
   MAX_NOVNC_HTML_BYTES,
+  novncPageRequestHeaders,
+  rewrittenNovncHeaders,
   shouldInjectNovncStorageShim,
 } from "./src/novnc-html.js";
 import {
@@ -109,10 +113,10 @@ function attachNovncProxy(server: ViteDevServer | PreviewServer, secret: string,
       res.end("Invalid or expired screen capability");
       return;
     }
+    const forwarded = safeProxyHeaders(req.headers);
     const headers = {
-      ...safeProxyHeaders(req.headers),
-      // The storage shim rewrites the page, so ask for it uncompressed.
-      ...(isNovncPage(target.path) ? { "accept-encoding": "identity" } : {}),
+      // The storage shim rewrites the page, so ask for all of it, uncompressed.
+      ...(isNovncPage(target.path) ? novncPageRequestHeaders(forwarded) : forwarded),
       host: `${target.hostname}:${target.port}`,
     };
     const transport = target.protocol === "https:" ? https : http;
@@ -192,8 +196,7 @@ function attachNovncProxy(server: ViteDevServer | PreviewServer, secret: string,
                 if (downstreamFinished || res.destroyed || res.writableEnded) return;
                 downstreamFinished = true;
                 const body = injectNovncStorageShim(html);
-                delete responseHeaders["content-length"];
-                res.writeHead(incoming.statusCode ?? 502, responseHeaders);
+                res.writeHead(incoming.statusCode ?? 502, rewrittenNovncHeaders(responseHeaders));
                 res.end(body);
               })
               .catch(() => {
@@ -381,7 +384,9 @@ function attachNovncProxy(server: ViteDevServer | PreviewServer, secret: string,
   });
 }
 
-export default defineConfig(({ mode }) => {
+export default defineConfig(({ command, mode }) => {
+  // Names this build in every API request; the dev server has none, so the handshake stays off.
+  const buildId = command === "build" ? buildIdAt(new Date()) : "";
   const rootEnv = loadEnv(mode, path.resolve(import.meta.dirname, "../.."), "");
   const api = process.env.API_PROXY_TARGET ?? rootEnv.API_PROXY_TARGET ?? "http://127.0.0.1:3100";
   const apiProxy = Object.fromEntries(
@@ -438,7 +443,17 @@ export default defineConfig(({ mode }) => {
     ),
   });
   return {
+    define: { "import.meta.env.RAKAZO_BUILD": JSON.stringify(buildId) },
     plugins: [
+      {
+        // The API reads this to name the deployed build, and a tab fetches it to confirm the
+        // server already serves a newer build before it reloads.
+        name: "rakazo-build-id",
+        apply: "build",
+        generateBundle() {
+          this.emitFile({ type: "asset", fileName: "build-id", source: `${buildId}\n` });
+        },
+      },
       react(),
       babel({ plugins: ["@lingui/babel-plugin-lingui-macro"] }),
       lingui(),
@@ -449,7 +464,10 @@ export default defineConfig(({ mode }) => {
         configurePreviewServer(server) {
           server.middlewares.use((req, res, next) => {
             const policy = contentSecurityPolicyFor(req.url?.split("?", 1)[0] ?? "/", appPolicy);
-            if (policy) res.setHeader("content-security-policy", policy);
+            if (policy) {
+              res.setHeader("content-security-policy", policy);
+              res.setHeader("reporting-endpoints", CSP_REPORTING_ENDPOINTS);
+            }
             next();
           });
         },

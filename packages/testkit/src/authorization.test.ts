@@ -15,6 +15,7 @@ import {
   releaseSpaceDeletionClaim,
   renewSpaceDeletionClaim,
   runAsSystem,
+  runAsTenant,
 } from "@rakazo/db";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { createApp } from "../../../apps/api/src/app.ts";
@@ -292,7 +293,7 @@ describeWithDatabase("API authorization and resource isolation", () => {
     const ownerThread = await db.thread.findUniqueOrThrow({
       where: { botId: ownerBot.id },
     });
-    const ownerTask = await handles.prisma.task.create({
+    const ownerTask = await asSystem(handles.prisma).task.create({
       data: {
         spaceId: ownerActor.spaceId,
         userId: ownerActor.userId,
@@ -302,7 +303,7 @@ describeWithDatabase("API authorization and resource isolation", () => {
         status: "waiting_input",
       },
     });
-    const ownerRun = await handles.prisma.run.create({
+    const ownerRun = await asSystem(handles.prisma).run.create({
       data: {
         spaceId: ownerActor.spaceId,
         userId: ownerActor.userId,
@@ -457,20 +458,22 @@ describeWithDatabase("API authorization and resource isolation", () => {
       await handles.prisma.capabilityInstall.findUnique({ where: { id: ownerCapability.id } }),
     ).not.toBeNull();
     expect(
-      await handles.prisma.connection.findUniqueOrThrow({
+      await asSystem(handles.prisma).connection.findUniqueOrThrow({
         where: { id: ownerConnection.connectionId },
       }),
     ).toMatchObject({ status: "connected", userId: ownerActor.userId });
 
-    const ownerBotAfter = await handles.prisma.bot.findUniqueOrThrow({
+    const ownerBotAfter = await asSystem(handles.prisma).bot.findUniqueOrThrow({
       where: { id: ownerBot.id },
     });
     expect(ownerBotAfter.name).toBe("Owner Bot");
     expect(
-      await handles.prisma.routine.findUniqueOrThrow({ where: { id: ownerRoutine.id } }),
+      await asSystem(handles.prisma).routine.findUniqueOrThrow({ where: { id: ownerRoutine.id } }),
     ).toMatchObject({ name: "Owner Routine" });
     expect(
-      await handles.prisma.scratchpadItem.findUniqueOrThrow({ where: { id: ownerScratchpad.id } }),
+      await asSystem(handles.prisma).scratchpadItem.findUniqueOrThrow({
+        where: { id: ownerScratchpad.id },
+      }),
     ).toMatchObject({ title: "Owner open work", notes: "private" });
     expect(
       await db.memoryDocument.findUniqueOrThrow({ where: { id: ownerMemory.id } }),
@@ -481,7 +484,9 @@ describeWithDatabase("API authorization and resource isolation", () => {
       botId: ownerBot.id,
       deleteMemories: true,
     });
-    expect(await handles.prisma.bot.findUnique({ where: { id: ownerBot.id } })).not.toBeNull();
+    expect(
+      await asSystem(handles.prisma).bot.findUnique({ where: { id: ownerBot.id } }),
+    ).not.toBeNull();
   });
 
   it("hands a device's push token to the account that registers it last", async () => {
@@ -608,6 +613,68 @@ describeWithDatabase("API authorization and resource isolation", () => {
     expect(await a.me()).toBe(200);
   });
 
+  it("accepts only signed bearer tokens, and every sign-in hands one out", async () => {
+    const email = `phone-signed-${stamp}@rakazo.test`;
+    const phone = await phoneSession(app, email);
+    const me = async (token: string) =>
+      (
+        await app.request("/rpc/me", {
+          method: "POST",
+          headers: {
+            origin: "rakazo://",
+            authorization: `Bearer ${token}`,
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({ json: {} }),
+        })
+      ).status;
+    const authJson = async (path: string, token: string, body: unknown) => {
+      const response = await app.request(`/api/auth${path}`, {
+        method: "POST",
+        headers: {
+          origin: "rakazo://",
+          "content-type": "application/json",
+          ...(token ? { authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify(body),
+      });
+      expect(response.status).toBe(200);
+      const json = (await response.json()) as { token: string };
+      expect(json.token).toBe(decodeURIComponent(response.headers.get("set-auth-token") ?? ""));
+      return json.token;
+    };
+
+    const stored = await handles.prisma.session.findFirstOrThrow({
+      where: { userId: phone.userId },
+      select: { token: true },
+    });
+    expect(phone.token.startsWith(`${stored.token}.`)).toBe(true);
+    expect(phone.token).toBe(decodeURIComponent(phone.setAuthToken));
+    expect(await me(phone.token)).toBe(200);
+    expect(await me(encodeURIComponent(phone.token))).toBe(200);
+
+    // A token copied out of the session table, or given a forged signature, is not a session.
+    expect(await me(stored.token)).toBe(401);
+    expect(await me(`${stored.token}.${"A".repeat(43)}=`)).toBe(401);
+    const rawSession = await app.request("/api/auth/get-session", {
+      headers: { origin: "rakazo://", authorization: `Bearer ${stored.token}` },
+    });
+    expect(await rawSession.json()).toBeNull();
+
+    const signedIn = await authJson("/sign-in/email", "", { email, password: "password12" });
+    expect(await me(signedIn)).toBe(200);
+
+    // Replacing the session on a password change hands the phone the signed replacement.
+    const replaced = await authJson("/change-password", signedIn, {
+      currentPassword: "password12",
+      newPassword: "password34",
+      revokeOtherSessions: true,
+    });
+    expect(replaced).not.toBe(signedIn);
+    expect(await me(replaced)).toBe(200);
+    expect(await me(signedIn)).toBe(401);
+  });
+
   it("drops a push token when the session that registered it is revoked", async () => {
     const email = `push-sessions-${stamp}@rakazo.test`;
     const phone = await signup(app, email, "Push Sessions");
@@ -722,7 +789,7 @@ describeWithDatabase("API authorization and resource isolation", () => {
 
     await rpc(app, member, "approvalRules/remove", { id: ownerRule.id });
     expect(
-      await handles.prisma.actionApprovalRule.findUnique({ where: { id: ownerRule.id } }),
+      await asSystem(handles.prisma).actionApprovalRule.findUnique({ where: { id: ownerRule.id } }),
     ).not.toBeNull();
   });
 
@@ -849,7 +916,7 @@ describeWithDatabase("API authorization and resource isolation", () => {
     );
     expect(otherOrganizationNavigation.spaces.map((space) => space.id)).toEqual([otherWorkspaceId]);
 
-    const storedBots = await handles.prisma.bot.findMany({
+    const storedBots = await asSystem(handles.prisma).bot.findMany({
       where: { id: { in: [originalBot.id, supportBot.id] } },
       select: { id: true, spaceId: true, computerId: true },
     });
@@ -1267,7 +1334,7 @@ describeWithDatabase("API authorization and resource isolation", () => {
     const cookie = await signup(app, `space-race-${stamp}@rakazo.test`, "Space Race");
     const actor = await rpc<Actor>(app, cookie, "me");
     const space = await rpc<Space>(app, cookie, "spaces/create", { name: "Concurrent" });
-    await handles.prisma.computer.create({
+    await asSystem(handles.prisma).computer.create({
       data: {
         spaceId: space.id,
         userId: actor.userId,
@@ -1282,14 +1349,21 @@ describeWithDatabase("API authorization and resource isolation", () => {
       userId: actor.userId,
       spaceId: space.id,
     };
+    // The procedures run these as a member of the Space being deleted.
+    const asMember = <T>(fn: () => Promise<T>) =>
+      runAsTenant({ spaceId: space.id, userId: actor.userId }, fn);
 
-    const firstClaim = await claimEmptySpaceDeletionForMember(handles.prisma, deleteInput);
+    const firstClaim = await asMember(() =>
+      claimEmptySpaceDeletionForMember(handles.prisma, deleteInput),
+    );
     expect(firstClaim.recovered).toBe(false);
     expect(firstClaim.computers).toEqual([
       expect.objectContaining({ providerRef: `space-race-provider-${stamp}` }),
     ]);
     await expect(
-      renewSpaceDeletionClaim(handles.prisma, { ...deleteInput, claimId: firstClaim.claimId }),
+      asMember(() =>
+        renewSpaceDeletionClaim(handles.prisma, { ...deleteInput, claimId: firstClaim.claimId }),
+      ),
     ).resolves.toBe(true);
     const claimedNavigation = await rpc<SpaceNavigation>(app, cookie, "spaces/list", {}, space.id);
     expect(claimedNavigation.spaces.find((item) => item.id === space.id)).toMatchObject({
@@ -1302,9 +1376,9 @@ describeWithDatabase("API authorization and resource isolation", () => {
     const blockedCreate = await raw(app, cookie, "bots/create", botInput("Racing bot"), space.id);
     expect(blockedCreate.ok).toBe(false);
     expect(blockedCreate.status).toBe(409);
-    expect(await handles.prisma.bot.count({ where: { spaceId: space.id } })).toBe(0);
+    expect(await asSystem(handles.prisma).bot.count({ where: { spaceId: space.id } })).toBe(0);
     expect(
-      await handles.prisma.computer.findFirst({
+      await asSystem(handles.prisma).computer.findFirst({
         where: { spaceId: space.id },
         select: { providerRef: true },
       }),
@@ -1325,25 +1399,30 @@ describeWithDatabase("API authorization and resource isolation", () => {
     await expect(
       handles.prisma.space.findUniqueOrThrow({ where: { id: space.id }, select: { name: true } }),
     ).resolves.toEqual({ name: "Concurrent" });
-    const replacementClaim = await claimEmptySpaceDeletionForMember(handles.prisma, deleteInput);
+    const replacementClaim = await asMember(() =>
+      claimEmptySpaceDeletionForMember(handles.prisma, deleteInput),
+    );
     expect(replacementClaim.recovered).toBe(true);
     await expect(
-      deleteEmptySpaceForMember(handles.prisma, { ...deleteInput, claimId: firstClaim.claimId }),
+      asMember(() =>
+        deleteEmptySpaceForMember(handles.prisma, { ...deleteInput, claimId: firstClaim.claimId }),
+      ),
     ).rejects.toThrow("Space deletion is already in progress");
-    await releaseSpaceDeletionClaim(handles.prisma, {
-      ...deleteInput,
-      claimId: firstClaim.claimId,
-    });
+    await asMember(() =>
+      releaseSpaceDeletionClaim(handles.prisma, { ...deleteInput, claimId: firstClaim.claimId }),
+    );
     expect(
       await handles.prisma.space.findUnique({
         where: { id: space.id },
         select: { deletionClaimId: true },
       }),
     ).toEqual({ deletionClaimId: replacementClaim.claimId });
-    await releaseSpaceDeletionClaim(handles.prisma, {
-      ...deleteInput,
-      claimId: replacementClaim.claimId,
-    });
+    await asMember(() =>
+      releaseSpaceDeletionClaim(handles.prisma, {
+        ...deleteInput,
+        claimId: replacementClaim.claimId,
+      }),
+    );
     const created = await raw(app, cookie, "bots/create", botInput("After retry"), space.id);
     expect(created.ok).toBe(true);
   });
@@ -1352,7 +1431,7 @@ describeWithDatabase("API authorization and resource isolation", () => {
     const cookie = await signup(app, `space-teardown-${stamp}@rakazo.test`, "Teardown");
     const actor = await rpc<Actor>(app, cookie, "me");
     const space = await rpc<Space>(app, cookie, "spaces/create", { name: "Teardown" });
-    await handles.prisma.computer.create({
+    await asSystem(handles.prisma).computer.create({
       data: {
         spaceId: space.id,
         userId: actor.userId,
@@ -1376,7 +1455,7 @@ describeWithDatabase("API authorization and resource isolation", () => {
       expect(lifecycle?.deletingAt).toBeInstanceOf(Date);
       expect(lifecycle?.deletionClaimId).toBeTruthy();
       expect(
-        await handles.prisma.computer.findFirst({
+        await asSystem(handles.prisma).computer.findFirst({
           where: { spaceId: space.id },
           select: { providerRef: true },
         }),
@@ -1410,7 +1489,7 @@ describeWithDatabase("API authorization and resource isolation", () => {
     const cookie = await signup(app, `space-deadline-${stamp}@rakazo.test`, "Deadline");
     const actor = await rpc<Actor>(app, cookie, "me");
     const space = await rpc<Space>(app, cookie, "spaces/create", { name: "Deadline" });
-    await handles.prisma.computer.create({
+    await asSystem(handles.prisma).computer.create({
       data: {
         spaceId: space.id,
         userId: actor.userId,
@@ -1833,7 +1912,8 @@ async function phoneSession(app: App, email: string) {
         body: JSON.stringify({ json: {} }),
       })
     ).status;
-  return { headers, me, cookie, userId: user.id };
+  const setAuthToken = response.headers.get("set-auth-token") ?? "";
+  return { headers, me, cookie, userId: user.id, token, setAuthToken };
 }
 
 async function signin(app: App, email: string, password = "password12") {

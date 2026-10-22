@@ -2,6 +2,7 @@ import type { TelegramBotCredentials } from "@rakazo/adapters";
 import {
   boatApiKeyFromEnv,
   boatApiUrlFromEnv,
+  mcpStdioOptionsFromEnv,
   resolveCloudAgentProvider,
   resolveDeploymentModel,
   resolveSandboxProvider,
@@ -9,14 +10,18 @@ import {
   telegramBotsFromEnv,
 } from "@rakazo/adapters";
 import type { OidcConfig } from "@rakazo/auth";
+import type { MinimumClientBuilds } from "@rakazo/contracts";
+import { parseMinimumClientBuilds } from "@rakazo/contracts";
 import {
   phoneCallSettings,
   resolveAuthSecret,
+  resolveContentEncryption,
   resolveEncryptionKey,
   resolveScreenProxySecret,
   resolveSupervisorToken,
   uploadSizeFromEnv,
 } from "@rakazo/core";
+import { monitoringPseudonymSecret } from "@rakazo/logging";
 
 export { resolveCloudAgentProvider, resolveSandboxProvider } from "@rakazo/adapters";
 
@@ -39,13 +44,15 @@ export interface AppEnv {
   privacyPolicyUrl?: string;
   apiUrl: string;
   apiHost: string;
-  /** Proxies whose forwarded client address is believed; anyone else is the client. */
+  /** Proxies whose forwarded client address is believed; empty means local networks. */
   trustedProxies: string[];
   /** The header those proxies set. */
   clientIpHeader: string;
   signupsEnabled: string | undefined;
   signupAllowlist: string | undefined;
   encryptionKey: string;
+  /** CONTENT_ENCRYPTION: whether new content is encrypted at rest. */
+  contentEncryption: boolean;
   dataDir: string;
   /** Opt-in Pi JSONL session recording under DATA_DIR/pi-sessions. Default off. */
   piSessionRecording: boolean;
@@ -119,12 +126,18 @@ export interface AppEnv {
   wakeupDriver: string;
   mcpStdioEnabled: boolean;
   mcpStdioAllowedCommands: string[];
+  /** Package dir, install/startup timeouts and idle reaping for stdio MCP servers. */
+  mcpStdio: ReturnType<typeof mcpStdioOptionsFromEnv>;
   /** Deployment-owner escape for remote MCP on RFC1918 / Docker-network hosts. */
   mcpAllowPrivateEndpoint: boolean;
   port: number;
   gitSha: string | undefined;
+  /** Oldest client build per kind the API still serves (RAKAZO_MIN_CLIENT_BUILD). */
+  minimumClientBuilds?: MinimumClientBuilds;
   /** Browser error reporting, served to the web app at runtime. The DSN is public by design. */
-  browserMonitoring: { dsn: string; environment?: string; release?: string } | undefined;
+  browserMonitoring:
+    | { dsn: string; environment?: string; release?: string; pseudonymSecret?: string }
+    | undefined;
   /** Private Compose control-network URL for the opt-in updater sidecar. */
   updaterUrl: string | undefined;
   /** Bearer shared with the updater; never sent to the browser. */
@@ -208,6 +221,7 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): AppEnv {
     signupsEnabled: source.SIGNUPS_ENABLED,
     signupAllowlist: source.SIGNUP_ALLOWLIST,
     encryptionKey: resolveEncryptionKey(source),
+    contentEncryption: resolveContentEncryption(source),
     dataDir: source.DATA_DIR ?? "./data",
     piSessionRecording: source.PI_SESSION_RECORDING === "true",
     ticketBoardEnabled: source.TICKET_BOARD_ENABLED === "true",
@@ -276,9 +290,11 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): AppEnv {
       .split(",")
       .map((value) => value.trim())
       .filter(Boolean),
+    mcpStdio: mcpStdioOptionsFromEnv(source),
     mcpAllowPrivateEndpoint: source.MCP_ALLOW_PRIVATE_ENDPOINT === "true",
     port: Number(source.API_PORT ?? 3100),
     gitSha: optional(source.GIT_SHA) ?? optional(source.RAKAZO_GIT_SHA),
+    minimumClientBuilds: parseMinimumClientBuilds(source.RAKAZO_MIN_CLIENT_BUILD),
     browserMonitoring: browserMonitoringFromEnv(source),
     updaterUrl,
     updaterToken,
@@ -300,6 +316,7 @@ function browserMonitoringFromEnv(source: NodeJS.ProcessEnv): AppEnv["browserMon
     dsn,
     environment: optional(source.SENTRY_ENVIRONMENT),
     release: optional(source.SENTRY_RELEASE) ?? (sha === "unknown" ? undefined : sha),
+    pseudonymSecret: monitoringPseudonymSecret(source),
   };
 }
 

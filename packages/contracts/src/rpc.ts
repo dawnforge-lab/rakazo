@@ -771,6 +771,8 @@ export const appContract = {
         )
         .output(McpServerSchema),
       remove: oc.input(z.object({ id: Id })).output(z.object({ ok: z.literal(true) })),
+      /** Launch the server once (installing a stdio package if needed), list its tools, close it. */
+      test: oc.input(z.object({ id: Id })).output(McpServerSchema),
     },
     assignments: {
       list: oc.input(botId).output(z.array(BotMcpServerSchema)),
@@ -829,7 +831,14 @@ export const appContract = {
     /** Flip an app_connect card to connected after authorization completes. */
     appConnected: oc
       .input(
-        z.object({ botId: Id, provider: z.string(), connectorId: z.string().default("composio") }),
+        z.object({
+          botId: Id,
+          threadId: Id.optional(),
+          /** The card's own message, so it is found however far back it is. */
+          messageId: Id.optional(),
+          provider: z.string(),
+          connectorId: z.string().default("composio"),
+        }),
       )
       .output(z.object({ ok: z.literal(true) })),
   },

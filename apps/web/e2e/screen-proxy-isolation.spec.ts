@@ -26,6 +26,7 @@ const screenHtml = `<!doctype html><title>Fake screen</title>
     asset: loaded,
     cookie: attempt(() => document.cookie),
     storage: attempt(() => localStorage.getItem('app-data')),
+    session: attempt(() => { sessionStorage.setItem('k', 'v'); return sessionStorage.getItem('k'); }),
     // A blank child frame shares this opaque origin but not the shim, so it reaches the real
     // getter. Only a SecurityError proves the sandbox blocked it.
     realStorage: (() => {
@@ -91,6 +92,9 @@ for (const mode of ["development", "preview"] as const) {
           }
           res.setHeader("Content-Type", "text/javascript");
           res.end('export const loaded = "module loaded";');
+        } else if (req.headers["if-modified-since"] || req.headers["if-none-match"]) {
+          // Like a static file server: a browser holding any copy gets 304 and keeps it.
+          res.writeHead(304).end();
         } else if (/\bgzip\b/.test(String(req.headers["accept-encoding"] ?? ""))) {
           // Like a provider edge: compress HTML whenever the client allows it.
           res.setHeader("Content-Type", "text/html");
@@ -210,6 +214,7 @@ for (const mode of ["development", "preview"] as const) {
         socket: "ok",
         cookie: "blocked",
         storage: null,
+        session: "v",
         realStorage: "SecurityError",
         api: "blocked",
       });
@@ -221,6 +226,21 @@ for (const mode of ["development", "preview"] as const) {
       ).toBe("fake-session");
     });
 
+    test("a browser holding an old copy still gets the rewritten page, never stored", async ({
+      request,
+    }) => {
+      const response = await request.get(screenUrl, {
+        headers: {
+          "if-modified-since": "Wed, 21 Oct 2026 01:05:20 GMT",
+          "if-none-match": '"cached"',
+        },
+      });
+      expect(response.status()).toBe(200);
+      expect(response.headers()["cache-control"]).toBe("no-store");
+      expect(response.headers()["last-modified"]).toBeUndefined();
+      expect(await response.text()).toContain("const items = new Map()");
+    });
+
     test("HTML that is not a noVNC page is passed through unchanged", async ({ page }) => {
       await page.goto(`${origin}/app`);
       const response = await page.goto(otherPageUrl);
@@ -228,6 +248,7 @@ for (const mode of ["development", "preview"] as const) {
       expect(response?.headers()["content-encoding"]).toBe("gzip");
       expect(JSON.parse(await page.locator("body").innerText())).toMatchObject({
         storage: "blocked",
+        session: "blocked",
         realStorage: "SecurityError",
       });
     });
@@ -290,6 +311,7 @@ for (const mode of ["development", "preview"] as const) {
           socket: "ok",
           cookie: "blocked",
           storage: null,
+          session: "v",
           realStorage: "SecurityError",
           parent: "blocked",
           api: "blocked",

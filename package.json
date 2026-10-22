@@ -9,7 +9,7 @@
     "node": "^22.22.2 || ^24.0.0 || >=26.0.0"
   },
   "scripts": {
-    "dev": "cross-env COREPACK_ENABLE_DOWNLOAD_PROMPT=0 turbo dev --filter=@rakazo/api --filter=@rakazo/worker --filter=@rakazo/web --filter=@rakazo/sandbox-supervisor",
+    "dev": "cross-env COREPACK_ENABLE_DOWNLOAD_PROMPT=0 turbo dev --env-mode=loose --filter=@rakazo/api --filter=@rakazo/worker --filter=@rakazo/web --filter=@rakazo/sandbox-supervisor",
     "build": "turbo build",
     "check": "turbo check",
     "lint": "biome check .",
@@ -39,6 +39,7 @@
     "@biomejs/biome": "2.5.15",
     "@types/node": "24.19.2",
     "cross-env": "10.1.0",
+    "esbuild": "0.28.2",
     "tsx": "4.23.15",
     "turbo": "2.11.9",
     "typescript": "7.0.2",

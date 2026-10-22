@@ -11,9 +11,9 @@ export RAILWAY_ENVIRONMENT_ID
 RAILWAY_ENVIRONMENT_ID=$(node infra/railway/sandbox-environment.mjs)
 # Set DATABASE_MIGRATION_URL to the owner and DATABASE_URL to a runtime login to
 # enforce row-level security; with one URL the app runs as the owner and warns.
-pnpm db:migrate
+pnpm --filter @rakazo/api db:deploy
 unset DATABASE_MIGRATION_URL
-pnpm --filter @rakazo/api exec tsx src/cli/bootstrap-owner.ts
+pnpm --filter @rakazo/api exec node dist/cli/bootstrap-owner.js
 unset OWNER_PASSWORD
 
 # All processes share one volume; a failed process restarts the whole service.
@@ -22,6 +22,8 @@ trap 'exit 143' TERM
 trap 'exit 130' INT
 # The API is reached only through the web preview proxy on loopback. Railway's edge names the
 # client in X-Real-IP, which that proxy passes on unchanged.
+# Server installs encrypt content at rest unless the operator sets CONTENT_ENCRYPTION=off.
+export CONTENT_ENCRYPTION="${CONTENT_ENCRYPTION:-on}"
 export TRUSTED_PROXIES="${TRUSTED_PROXIES:-127.0.0.1}"
 export CLIENT_IP_HEADER="${CLIENT_IP_HEADER:-x-real-ip}"
 pnpm --filter @rakazo/api start &
