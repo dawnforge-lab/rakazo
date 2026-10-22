@@ -19,6 +19,7 @@ import {
   HONCHO_REASONING_LEVELS,
   honchoPeerChat,
   honchoResourceId,
+  isHonchoConclusionId,
   MAX_HONCHO_CONCLUSION_BYTES,
   probeHonchoAdminKey,
   queryHonchoConclusions,
@@ -46,6 +47,8 @@ const NO_MEMORY = "NO_RELEVANT_MEMORY";
 
 /** Honcho returns at most this many conclusions per search. */
 const MAX_COPIES_PER_SEARCH = 100;
+/** Includes the cited fact; leave it available for retry when cleanup reaches the cap. */
+const MAX_DELETIONS_PER_FORGET = 200;
 
 /**
  * Local mode reaches the deployment owner's own network, so only the owner may set it.
@@ -398,6 +401,7 @@ export class HonchoMemoryProvider implements SemanticMemoryProvider {
   ): Promise<SemanticMemoryResponse<{ id: string; expired: boolean; reason: string | null }>> {
     const id = request.id.trim();
     if (!id) return { ok: false, error: "id is required" };
+    if (!isHonchoConclusionId(id)) return { ok: false, error: "Invalid Honcho conclusion id." };
     const observers = recallObservers(request.scope, request.botId);
     if (request.entity && !observers.includes(request.entity)) {
       return { ok: false, error: "That memory belongs to another bot or Space." };
@@ -411,13 +415,18 @@ export class HonchoMemoryProvider implements SemanticMemoryProvider {
     const recallable = (conclusion: { observerId: string; observedId: string }) =>
       conclusion.observedId === SHARED_PEER_ID && observers.includes(conclusion.observerId);
     const fact = found.value;
-    if (!fact || !recallable(fact) || (request.entity && fact.observerId !== request.entity)) {
+    if (
+      !fact ||
+      fact.id !== id ||
+      !recallable(fact) ||
+      (request.entity && fact.observerId !== request.entity)
+    ) {
       return { ok: false, error: "No memory with that id was found in this bot's memory." };
     }
     // A shared save writes the fact from two perspectives, repeated saves add more copies, and
     // recall cites only one. Remove every copy this bot could recall again: deleted copies leave
-    // the search, so search again until a round finds none. The cited fact goes last, so a failed
-    // forget can be retried with the same id.
+    // the search, so search again until none remain or the deletion cap is reached. The cited
+    // fact goes last, so a failed forget can be retried with the same id.
     const key = normalizeMemory(fact.content);
     const deleted = new Set([fact.id]);
     for (;;) {
@@ -450,13 +459,16 @@ export class HonchoMemoryProvider implements SemanticMemoryProvider {
         }
       }
       if (pending.size === 0) break;
+      if (deleted.size + pending.size > MAX_DELETIONS_PER_FORGET) {
+        return { ok: false, error: "Honcho forget reached its deletion limit. Retry this id." };
+      }
       const results = await Promise.all(
         [...pending].map((conclusionId) =>
           deleteHonchoConclusion(connection.value, workspaceId, conclusionId, context.signal),
         ),
       );
       const failure = results.find((result) => !result.ok);
-      if (failure && !failure.ok) return failure;
+      if (failure) return failure;
       for (const conclusionId of pending) deleted.add(conclusionId);
     }
     const removed = await deleteHonchoConclusion(

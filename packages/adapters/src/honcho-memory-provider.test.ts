@@ -700,6 +700,75 @@ describe("Honcho forget", () => {
     expect(await memory.recall(recall, context)).toEqual({ ok: true, value: [] });
   });
 
+  it("ignores out-of-scope copies even when search returns them", async () => {
+    const normal = honchoFetch();
+    const fetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      if (String(url).endsWith("/conclusions/query")) {
+        return Response.json([
+          {
+            id: "other-bot",
+            content: "Prefers tea",
+            observer_id: "bot-bot-2",
+            observed_id: "rakazo-shared",
+          },
+          {
+            id: "user-fact",
+            content: "Prefers tea",
+            observer_id: "bot-bot-1",
+            observed_id: "user-peer",
+          },
+        ]);
+      }
+      return normal(url, init);
+    });
+    const memory = provider(fetch);
+    await save(memory, "Prefers tea", "isolated");
+    await expect(
+      memory.forget({ id: "conclusion-1", scope: "shared", botId: "bot-1" }, context),
+    ).resolves.toMatchObject({ ok: true });
+    expect(deletes(fetch)).toEqual(["/v3/workspaces/rakazo-space-1/conclusions/conclusion-1"]);
+  });
+
+  it("caps duplicate cleanup and leaves the cited id available for retry", async () => {
+    const fetch = honchoFetch();
+    const memory = provider(fetch);
+    for (let copy = 0; copy < 205; copy++) await save(memory, "Prefers tea", "isolated");
+    const request = { id: "conclusion-1", scope: "isolated" as const, botId: "bot-1" };
+    await expect(memory.forget(request, context)).resolves.toEqual({
+      ok: false,
+      error: "Honcho forget reached its deletion limit. Retry this id.",
+    });
+    expect(deletes(fetch).length).toBeLessThanOrEqual(200);
+    expect(deletes(fetch)).not.toContain("/v3/workspaces/rakazo-space-1/conclusions/conclusion-1");
+    await expect(memory.forget(request, context)).resolves.toMatchObject({ ok: true });
+    expect(deletes(fetch)).toHaveLength(205);
+  });
+
+  it("cannot delete a fact from another Space using its id", async () => {
+    const fetch = honchoFetch(undefined, ["rakazo-space-1", "rakazo-space-2"]);
+    const memory = provider(fetch);
+    await memory.save(
+      { content: "Private fact", scope: "isolated", botId: "bot-1", source: { kind: "durable" } },
+      { ...context, spaceId: "space-2" },
+    );
+    await expect(
+      memory.forget({ id: "conclusion-1", scope: "shared", botId: "bot-1" }, context),
+    ).resolves.toMatchObject({ ok: false });
+    expect(deletes(fetch)).toEqual([]);
+  });
+
+  it.each([
+    { id: "other-id", observer_id: "bot-bot-1", observed_id: "rakazo-shared" },
+    { id: "conclusion-1", observer_id: "bot-bot-1", observed_id: "user-peer" },
+    { id: "conclusion-1", observer_id: "user-peer", observed_id: "rakazo-shared" },
+  ])("rejects a lookup outside the requested id and peer scope: %o", async (fact) => {
+    const fetch = vi.fn(async () => Response.json({ ...fact, content: "Private fact" }));
+    await expect(
+      provider(fetch).forget({ id: "conclusion-1", scope: "shared", botId: "bot-1" }, context),
+    ).resolves.toMatchObject({ ok: false });
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
   it("cites each perspective's facts before the limit cuts them off", async () => {
     const memory = provider(honchoFetch());
     for (const fact of ["One", "Two", "Three", "Four", "Five"]) {
@@ -751,12 +820,15 @@ describe("Honcho forget", () => {
 
   it.each([
     [{ id: " ", entity: undefined }, "id is required"],
+    ...[".", "..", "../other", "id/other", "id?query", "x".repeat(513)].map(
+      (id) => [{ id, entity: undefined }, "Invalid Honcho conclusion id."] as const,
+    ),
     [{ id: "conclusion-1", entity: "bot-bot-2" }, "That memory belongs to another bot or Space."],
     [
       { id: "conclusion-1", entity: "rakazo-shared" },
       "That memory belongs to another bot or Space.",
     ],
-  ])("rejects %o before calling Honcho", async (request, error) => {
+  ] as const)("rejects %o before calling Honcho", async (request, error) => {
     const fetch = honchoFetch();
     await expect(
       provider(fetch).forget(

@@ -39,6 +39,10 @@ export interface HonchoStoredConclusion extends HonchoConclusion {
   id: string;
 }
 
+export function isHonchoConclusionId(value: unknown): value is string {
+  return typeof value === "string" && /^[A-Za-z0-9_-]{1,512}$/.test(value);
+}
+
 /** Honcho resource ids allow letters, digits, `_` and `-` only. */
 export function honchoResourceId(value: string): string {
   return value.replace(/[^A-Za-z0-9_-]/g, "_").slice(0, 512);
@@ -169,7 +173,7 @@ export async function createHonchoConclusions(
 function parseConclusion(value: unknown): HonchoStoredConclusion | undefined {
   const conclusion = value as Record<string, unknown> | null;
   if (
-    typeof conclusion?.id !== "string" ||
+    !isHonchoConclusionId(conclusion?.id) ||
     typeof conclusion.content !== "string" ||
     typeof conclusion.observer_id !== "string" ||
     typeof conclusion.observed_id !== "string"
@@ -217,6 +221,9 @@ export async function getHonchoConclusion(
   conclusionId: string,
   signal?: AbortSignal,
 ): Promise<HonchoResponse<HonchoStoredConclusion | null>> {
+  if (!isHonchoConclusionId(conclusionId)) {
+    return { ok: false, error: "Invalid Honcho conclusion id." };
+  }
   const result = await honchoRequest(
     config,
     `${workspacePath(workspaceId)}/conclusions/${encodeURIComponent(conclusionId)}`,
@@ -238,6 +245,9 @@ export async function deleteHonchoConclusion(
   conclusionId: string,
   signal?: AbortSignal,
 ): Promise<HonchoResponse<void>> {
+  if (!isHonchoConclusionId(conclusionId)) {
+    return { ok: false, error: "Invalid Honcho conclusion id." };
+  }
   const result = await honchoRequest(
     config,
     `${workspacePath(workspaceId)}/conclusions/${encodeURIComponent(conclusionId)}`,
