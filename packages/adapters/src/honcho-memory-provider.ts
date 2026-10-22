@@ -459,17 +459,18 @@ export class HonchoMemoryProvider implements SemanticMemoryProvider {
         }
       }
       if (pending.size === 0) break;
-      if (deleted.size + pending.size > MAX_DELETIONS_PER_FORGET) {
-        return { ok: false, error: "Honcho forget reached its deletion limit. Retry this id." };
-      }
+      const batch = [...pending].slice(0, MAX_DELETIONS_PER_FORGET - deleted.size);
       const results = await Promise.all(
-        [...pending].map((conclusionId) =>
+        batch.map((conclusionId) =>
           deleteHonchoConclusion(connection.value, workspaceId, conclusionId, context.signal),
         ),
       );
       const failure = results.find((result) => !result.ok);
       if (failure) return failure;
-      for (const conclusionId of pending) deleted.add(conclusionId);
+      for (const conclusionId of batch) deleted.add(conclusionId);
+      if (batch.length < pending.size) {
+        return { ok: false, error: "Honcho forget reached its deletion limit. Retry this id." };
+      }
     }
     const removed = await deleteHonchoConclusion(
       connection.value,

@@ -729,20 +729,29 @@ describe("Honcho forget", () => {
     expect(deletes(fetch)).toEqual(["/v3/workspaces/rakazo-space-1/conclusions/conclusion-1"]);
   });
 
-  it("caps duplicate cleanup and leaves the cited id available for retry", async () => {
-    const fetch = honchoFetch();
-    const memory = provider(fetch);
-    for (let copy = 0; copy < 205; copy++) await save(memory, "Prefers tea", "isolated");
-    const request = { id: "conclusion-1", scope: "isolated" as const, botId: "bot-1" };
-    await expect(memory.forget(request, context)).resolves.toEqual({
-      ok: false,
-      error: "Honcho forget reached its deletion limit. Retry this id.",
-    });
-    expect(deletes(fetch).length).toBeLessThanOrEqual(200);
-    expect(deletes(fetch)).not.toContain("/v3/workspaces/rakazo-space-1/conclusions/conclusion-1");
-    await expect(memory.forget(request, context)).resolves.toMatchObject({ ok: true });
-    expect(deletes(fetch)).toHaveLength(205);
-  });
+  it.each(["isolated", "shared"] as const)(
+    "caps %s duplicate cleanup and makes progress before retrying the cited id",
+    async (scope) => {
+      const fetch = honchoFetch();
+      const memory = provider(fetch);
+      const saves = scope === "shared" ? 105 : 205;
+      for (let copy = 0; copy < saves; copy++) await save(memory, "Prefers tea", scope);
+      const total = scope === "shared" ? 210 : 205;
+      const id = `conclusion-${total}`;
+      const request = { id, scope, botId: "bot-1" };
+      await expect(memory.forget(request, context)).resolves.toEqual({
+        ok: false,
+        error: "Honcho forget reached its deletion limit. Retry this id.",
+      });
+      expect(deletes(fetch)).toHaveLength(199);
+      expect(deletes(fetch)).not.toContain(`/v3/workspaces/rakazo-space-1/conclusions/${id}`);
+      await expect(memory.forget(request, context)).resolves.toMatchObject({ ok: true });
+      expect(deletes(fetch)).toHaveLength(total);
+      expect(new Set(deletes(fetch)).size).toBe(total);
+      expect(deletes(fetch).at(-1)).toBe(`/v3/workspaces/rakazo-space-1/conclusions/${id}`);
+      expect(await memory.recall({ ...recall, scope }, context)).toEqual({ ok: true, value: [] });
+    },
+  );
 
   it("cannot delete a fact from another Space using its id", async () => {
     const fetch = honchoFetch(undefined, ["rakazo-space-1", "rakazo-space-2"]);
